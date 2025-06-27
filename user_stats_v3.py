@@ -257,15 +257,43 @@ else:
 # Create a figure for daily active users
 fig2 = go.Figure(data=[
     go.Scatter(
-        x=daily_active_users['event_occurred_at'], 
-        y=daily_active_users['active_users'], 
-        mode='lines', 
+        x=daily_active_users['event_occurred_at'],
+        y=daily_active_users['active_users'],
+        mode='lines',
         name='Active Users',
         line=dict(color='darkcyan')  # Set color for Active Users line
     )
 ])
+
+# Default title
+chart_title = 'Active Users'
+
+# Conditionally add returning users trace and update title if aggregation is Daily
+if aggregation == 'Daily':
+    # Set index for alignment
+    active_users_series = daily_active_users.set_index('event_occurred_at')['active_users']
+
+    # Align active and new user series to handle any date mismatches
+    aligned_active, aligned_new = active_users_series.align(total_new_users, join='outer', fill_value=0)
+
+    # Calculate returning users (Active - New), ensuring it's not negative
+    returning_users = (aligned_active - aligned_new).clip(lower=0)
+
+    # Add the new trace to the figure
+    fig2.add_trace(go.Scatter(
+        x=returning_users.index,
+        y=returning_users,
+        mode='lines',
+        name='Returning Users',
+        line=dict(color='orange') # Style to differentiate
+    ))
+
+    # Update title to reflect the new data
+    chart_title = 'Daily Active vs. Returning Users'
+
+
 fig2.update_layout(
-    title='Active Users',
+    title=chart_title,
     xaxis_title='Date',
     yaxis_title='Count',
     width=1400,  # Increased chart width
