@@ -79,13 +79,17 @@ users_url = 'https://xlw5-kd1n-crdj.n7c.xano.io/api:-VPGC53-/users'
 @st.cache_data # Cache the data loading and initial processing
 def load_data():
     # Query the endpoints with retry logic
-    max_retries = 3
-    retry_delay = 2  # seconds
+    max_retries = 5  # Increased retries for server issues
+    base_retry_delay = 3  # seconds
+    
+    # Create a session for better connection reuse
+    session = requests.Session()
+    session.headers.update(HEADERS)
     
     for attempt in range(max_retries):
         try:
-            events_response = requests.get(events_url, headers=HEADERS, timeout=30)
-            users_response = requests.get(users_url, headers=HEADERS, timeout=30)
+            events_response = session.get(events_url, timeout=60)
+            users_response = session.get(users_url, timeout=60)
             
             # Check for successful responses
             if events_response.status_code == 200 and users_response.status_code == 200:
@@ -101,7 +105,26 @@ def load_data():
                 # Convert deleted_date later as it needs error handling
                 return users_df_initial, events_df_initial
             else:
-                st.error(f"Failed to retrieve data. Status codes: {events_response.status_code}, {users_response.status_code}")
+                # More detailed error messages
+                error_details = []
+                if events_response.status_code != 200:
+                    if events_response.status_code == 502:
+                        error_details.append(f"Events endpoint: 502 Bad Gateway (server error)")
+                    elif events_response.status_code == 404:
+                        error_details.append(f"Events endpoint: 404 Not Found")
+                    else:
+                        error_details.append(f"Events endpoint: {events_response.status_code}")
+                
+                if users_response.status_code != 200:
+                    if users_response.status_code == 502:
+                        error_details.append(f"Users endpoint: 502 Bad Gateway (server error)")
+                    elif users_response.status_code == 404:
+                        error_details.append(f"Users endpoint: 404 Not Found")
+                    else:
+                        error_details.append(f"Users endpoint: {users_response.status_code}")
+                
+                st.error(f"Failed to retrieve data. {'; '.join(error_details)}")
+                st.info("🔄 This appears to be a temporary server issue. Please try refreshing in a few minutes.")
                 return pd.DataFrame(), pd.DataFrame() # Return empty DataFrames on error
                 
         except (requests.exceptions.ChunkedEncodingError, 
@@ -110,13 +133,16 @@ def load_data():
                 requests.exceptions.RequestException) as e:
             
             if attempt < max_retries - 1:  # Not the last attempt
+                # Exponential backoff: wait longer between retries
+                retry_delay = base_retry_delay * (2 ** attempt)
                 st.warning(f"Connection attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
                 import time
                 time.sleep(retry_delay)
                 continue
             else:  # Last attempt failed
-                st.error(f"Failed to retrieve data after {max_retries} attempts. Error: {str(e)}")
-                st.error("Please check your internet connection and try refreshing the page.")
+                st.error(f"🔴 Failed to retrieve data after {max_retries} attempts. Error: {str(e)}")
+                st.error("🌐 This appears to be a Xano server issue, not your internet connection.")
+                st.info("💡 Try refreshing the page in a few minutes, or contact your backend team about the Xano server status.")
                 return pd.DataFrame(), pd.DataFrame() # Return empty DataFrames on error
 
 # Load the data using the cached function
