@@ -63,6 +63,11 @@ if st.session_state.get("show_auth_success_message", False):
     st.sidebar.success("Authenticated!")
     st.session_state.show_auth_success_message = False # Reset flag so it doesn't show again
 
+# Add cache clear button early so it's always visible (even when data loading fails)
+if st.sidebar.button("🔄 Clear Cache & Reload Data"):
+    st.cache_data.clear()
+    st.rerun()
+
 # The rest of your Streamlit application code follows here.
 
 # Set API key and headers
@@ -73,10 +78,10 @@ HEADERS = {'Authorization': f'Bearer {API_KEY}'}
 TARGET_TZ = pytz.timezone('US/Eastern')
 
 # API endpoints
-events_url = 'https://xlw5-kd1n-crdj.n7c.xano.io/api:-VPGC53-/app_events'
+events_url = 'https://xlw5-kd1n-crdj.n7c.xano.io/api:-VPGC53-/app_events?lookback_days=180'
 users_url = 'https://xlw5-kd1n-crdj.n7c.xano.io/api:-VPGC53-/users'
 
-@st.cache_data # Cache the data loading and initial processing
+@st.cache_data(ttl=300)  # Cache expires after 5 minutes to avoid stale error states
 def load_data():
     # Query the endpoints with retry logic
     max_retries = 5  # Increased retries for server issues
@@ -88,8 +93,13 @@ def load_data():
     
     for attempt in range(max_retries):
         try:
-            events_response = session.get(events_url, timeout=60)
-            users_response = session.get(users_url, timeout=60)
+            events_response = session.get(events_url, timeout=180)
+            if events_response:
+                print("Event response returned")
+
+            users_response = session.get(users_url, timeout=180)
+            if users_response:
+                print("Users response returned")
             
             # Check for successful responses
             if events_response.status_code == 200 and users_response.status_code == 200:
@@ -157,6 +167,7 @@ now_et = datetime.now(TARGET_TZ)
 
 # Sidebar controls
 st.sidebar.header("Controls")
+
 # Use .date() to pass only the date part to date_input
 default_start_date = (now_et - pd.Timedelta(weeks=12)).date()
 default_end_date = now_et.date()
