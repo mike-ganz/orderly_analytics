@@ -93,38 +93,61 @@ def load_data():
     
     for attempt in range(max_retries):
         try:
-            events_response = session.get(events_url, timeout=180)
-            if events_response:
-                print("Event response returned")
+            # Events endpoint is paginated: each response is {"events": [...], "paginated_url": "..."}.
+            # Follow paginated_url until it is falsy (server signals end of range).
+            all_events = []
+            next_url = events_url
+            page = 0
+            max_pages = 200  # safety cap (~1000 days at ~5 days/page)
+            events_status = None
+            while next_url and page < max_pages:
+                page += 1
+                print(f"Requesting events page {page}: {next_url}")
+                events_response = session.get(next_url, timeout=180)
+                events_status = events_response.status_code
+                print(f"Events page {page}: status={events_status}, size={len(events_response.content)} bytes")
+                if events_status != 200:
+                    print(f"Events error body: {events_response.text}")
+                    break
+                payload = events_response.json()
+                page_events = payload.get('events', []) if isinstance(payload, dict) else payload
+                all_events.extend(page_events)
+                next_url = payload.get('paginated_url') if isinstance(payload, dict) else None
 
             users_response = session.get(users_url, timeout=180)
-            if users_response:
-                print("Users response returned")
-            
+            print(f"Users response: status={users_response.status_code}, size={len(users_response.content)} bytes")
+
             # Check for successful responses
-            if events_response.status_code == 200 and users_response.status_code == 200:
-                events_data = events_response.json()
+            if events_status == 200 and users_response.status_code == 200:
                 users_data = users_response.json()
 
-                events_df_initial = pd.DataFrame(events_data)
+                events_df_initial = pd.DataFrame(all_events)
                 users_df_initial = pd.DataFrame(users_data)
+
+                if 'event_occurred_at' not in events_df_initial.columns:
+                    st.error(
+                        "Events payload is missing 'event_occurred_at'. "
+                        f"Columns returned: {events_df_initial.columns.tolist()}"
+                    )
+                    return pd.DataFrame(), pd.DataFrame()
 
                 # Convert timestamp fields to datetime, interpret as UTC, then convert to ET
                 users_df_initial['created_at'] = pd.to_datetime(users_df_initial['created_at'], unit='ms', utc=True).dt.tz_convert(TARGET_TZ)
                 events_df_initial['event_occurred_at'] = pd.to_datetime(events_df_initial['event_occurred_at'], unit='ms', utc=True).dt.tz_convert(TARGET_TZ)
                 # Convert deleted_date later as it needs error handling
+                print(f"Loaded {len(events_df_initial)} events across {page} page(s) and {len(users_df_initial)} users.")
                 return users_df_initial, events_df_initial
             else:
                 # More detailed error messages
                 error_details = []
-                if events_response.status_code != 200:
-                    if events_response.status_code == 502:
+                if events_status != 200:
+                    if events_status == 502:
                         error_details.append(f"Events endpoint: 502 Bad Gateway (server error)")
-                    elif events_response.status_code == 404:
+                    elif events_status == 404:
                         error_details.append(f"Events endpoint: 404 Not Found")
                     else:
-                        error_details.append(f"Events endpoint: {events_response.status_code}")
-                
+                        error_details.append(f"Events endpoint: {events_status}")
+
                 if users_response.status_code != 200:
                     if users_response.status_code == 502:
                         error_details.append(f"Users endpoint: 502 Bad Gateway (server error)")
@@ -132,7 +155,7 @@ def load_data():
                         error_details.append(f"Users endpoint: 404 Not Found")
                     else:
                         error_details.append(f"Users endpoint: {users_response.status_code}")
-                
+
                 st.error(f"Failed to retrieve data. {'; '.join(error_details)}")
                 st.info("🔄 This appears to be a temporary server issue. Please try refreshing in a few minutes.")
                 return pd.DataFrame(), pd.DataFrame() # Return empty DataFrames on error
